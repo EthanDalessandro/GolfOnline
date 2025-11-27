@@ -1,0 +1,8 @@
+d:\GitHub\Projet\GolfOnline\Server\GameCode\bin\Debug\GolfOnlineServer.dll
+d:\GitHub\Projet\GolfOnline\Server\GameCode\bin\Debug\GolfOnlineServer.pdb
+d:\GitHub\Projet\GolfOnline\Server\GameCode\bin\Debug\Player.IO GameLibrary.dll
+d:\GitHub\Projet\GolfOnline\Server\GameCode\obj\Debug\GameCode.csproj.AssemblyReference.cache
+d:\GitHub\Projet\GolfOnline\Server\GameCode\obj\Debug\GameCode.csproj.CoreCompileInputs.cache
+d:\GitHub\Projet\GolfOnline\Server\GameCode\obj\Debug\GameCode.csproj.Up2Date
+d:\GitHub\Projet\GolfOnline\Server\GameCode\obj\Debug\GolfOnlineServer.dll
+d:\GitHub\Projet\GolfOnline\Server\GameCode\obj\Debug\GolfOnlineServer.pdb
