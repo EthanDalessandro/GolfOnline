@@ -18,6 +18,7 @@ public class BallController : MonoBehaviour {
     public bool isLocalPlayer = false;
     public bool hasFinished = false;
     public string ownerId; 
+    public int playerIndex = 0; // Pour se souvenir du point de spawn 
 
     // Variables internes
     private Vector3 startPos;
@@ -263,6 +264,9 @@ public class BallController : MonoBehaviour {
 
     // --- FEEDBACK : INTERFACE UTILISATEUR (HUD) ---
     void OnGUI() {
+        NetworkManager nm = FindObjectOfType<NetworkManager>();
+        if (nm == null || !nm.gameStarted) return; // On n'affiche rien tant que le lobby est là
+
         if (isLocalPlayer) {
             // Style simple pour le TP
             GUIStyle style = new GUIStyle();

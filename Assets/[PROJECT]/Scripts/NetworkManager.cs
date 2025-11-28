@@ -8,7 +8,11 @@ public class NetworkManager : MonoBehaviour {
 	private List<PlayerIOClient.Message> msgQueue = new List<PlayerIOClient.Message>();
 	private Dictionary<string, GameObject> players = new Dictionary<string, GameObject>();
 	public string myUserId;
-	public string currentTurnId = ""; // Public pour que BallController puisse lire
+	public string currentTurnId = ""; 
+
+    // LOBBY
+    public bool gameStarted = false; // Public pour que BallController puisse savoir s'il doit afficher son HUD
+    private Dictionary<string, bool> readyStatus = new Dictionary<string, bool>();
 
     // Points de départ pour 4 joueurs
     private Vector3[] spawnPoints = new Vector3[] {
@@ -63,10 +67,28 @@ public class NetworkManager : MonoBehaviour {
 		lock(msgQueue) {
 			foreach(var m in msgQueue) {
 				switch(m.Type) {
+                    case "GameStarted":
+                        gameStarted = true;
+                        Debug.Log("LA PARTIE COMMENCE !");
+                        break;
+
+                    case "PlayerReadyStatus":
+                        string rId = m.GetString(0);
+                        bool isReady = m.GetBoolean(1);
+                        if (readyStatus.ContainsKey(rId)) {
+                            readyStatus[rId] = isReady;
+                        } else {
+                            readyStatus.Add(rId, isReady);
+                        }
+                        break;
+
 					case "PlayerJoined":
 						string id = m.GetString(0);
-                        int index = m.GetInt(1); // Index (0-3)
-                        bool hasStarted = m.GetBoolean(2); // Est-ce qu'il a déjà joué ?
+                        int index = m.GetInt(1); 
+                        bool hasStarted = m.GetBoolean(2); 
+
+                        // On ajoute le joueur à la liste des statuts s'il n'y est pas
+                        if (!readyStatus.ContainsKey(id)) readyStatus.Add(id, false);
 
 						if(!players.ContainsKey(id)) {
                             Vector3 spawnPos = spawnPoints[index % spawnPoints.Length];
@@ -93,6 +115,8 @@ public class NetworkManager : MonoBehaviour {
 
 					case "PlayerLeft":
 						string leftId = m.GetString(0);
+                        if (readyStatus.ContainsKey(leftId)) readyStatus.Remove(leftId);
+
 						if(players.ContainsKey(leftId)) {
 							Destroy(players[leftId]);
 							players.Remove(leftId);
@@ -181,7 +205,7 @@ public class NetworkManager : MonoBehaviour {
         Debug.Log("--- RESET LEVEL ---");
 		foreach(var kvp in players) {
 			GameObject p = kvp.Value;
-			p.SetActive(true);
+			p.SetActive(true); // On réactive tout le monde au reset (version stable)
 			p.transform.position = new Vector3(0, 0.5f, 0); 
 			p.GetComponent<Rigidbody>().isKinematic = false;
             p.GetComponent<Rigidbody>().linearVelocity = Vector3.zero; // Stop physics
@@ -195,6 +219,12 @@ public class NetworkManager : MonoBehaviour {
                 bc.UpdateTargetPosition(p.transform.position);
                 bc.OnTurnStarted();
 			}
+		}
+	}
+
+	public void SendReady() {
+		if(pioconnection != null) {
+			pioconnection.Send("Ready");
 		}
 	}
 
@@ -221,6 +251,38 @@ public class NetworkManager : MonoBehaviour {
 			pioconnection.Send("ReachedHole");
 		}
 	}
+
+    // INTERFACE DU LOBBY
+    void OnGUI() {
+        if (!gameStarted && pioconnection != null) {
+            // Fond noir semi-transparent
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+
+            GUILayout.BeginArea(new Rect(Screen.width/2 - 150, Screen.height/2 - 200, 300, 400));
+            GUILayout.Label("SALON D'ATTENTE", new GUIStyle(GUI.skin.label) { fontSize = 30, alignment = TextAnchor.MiddleCenter });
+            GUILayout.Space(20);
+
+            foreach(var kvp in readyStatus) {
+                string status = kvp.Value ? "<color=green>PRÊT</color>" : "<color=red>EN ATTENTE</color>";
+                string name = (kvp.Key == myUserId) ? "MOI" : kvp.Key;
+                GUILayout.Label(name + " : " + status, new GUIStyle(GUI.skin.label) { richText = true, fontSize = 20 });
+            }
+
+            GUILayout.Space(50);
+
+            bool amIReady = readyStatus.ContainsKey(myUserId) && readyStatus[myUserId];
+            string btnText = amIReady ? "ANNULER" : "JE SUIS PRÊT !";
+            
+            if (GUILayout.Button(btnText, new GUIStyle(GUI.skin.button) { fontSize = 25, fixedHeight = 60 })) {
+                SendReady();
+            }
+            
+            GUILayout.Label("La partie se lancera quand tout le monde sera prêt.", new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter });
+
+            GUILayout.EndArea();
+        }
+    }
+
 	void OnApplicationQuit() {
 		Disconnect();
 	}

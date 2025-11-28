@@ -8,12 +8,14 @@ namespace GolfOnlineServer {
 		public float X, Y, Z;
 		public bool HasFinished = false;
         public int PlayerIndex = 0;
-        public bool HasStarted = false; // Est-ce qu'il a déjà joué au moins une fois ?
+        public bool HasStarted = false; 
+        public bool IsReady = false; // Est-il prêt dans le lobby ?
 	}
 
 	[RoomType("GolfOnline")]
 	public class GameCode : Game<Player> {
 		private string currentPlayerId = "";
+        private bool gameHasStarted = false;
 
 		public override void GameStarted() {
 			Console.WriteLine("Game is started: " + RoomId);
@@ -24,7 +26,8 @@ namespace GolfOnlineServer {
 		}
 
         public override bool AllowUserJoin(Player player) {
-            if (Players.Count() >= 4) return false;
+            // Si le jeu a déjà commencé, on refuse (ou on pourrait accepter en spectateur, mais simple pour le TP)
+            if (gameHasStarted || Players.Count() >= 4) return false;
             return true;
         }
 
@@ -34,36 +37,39 @@ namespace GolfOnlineServer {
 			
 			foreach(Player p in Players) {
 				if(p.ConnectUserId != player.ConnectUserId) {
-                    // On envoie l'état HasStarted des autres
 					player.Send("PlayerJoined", p.ConnectUserId, p.PlayerIndex, p.HasStarted, p.X, p.Y, p.Z);
+                    // On informe aussi le nouveau du statut "Prêt" des anciens
+                    player.Send("PlayerReadyStatus", p.ConnectUserId, p.IsReady);
 				}
 			}
 
-            // Le nouveau n'a pas encore commencé (false)
 			Broadcast("PlayerJoined", player.ConnectUserId, player.PlayerIndex, false, player.X, player.Y, player.Z);
-
-			if(currentPlayerId == "") {
-				currentPlayerId = player.ConnectUserId;
-                player.HasStarted = true; // Le premier commence direct
-				Broadcast("SetTurn", currentPlayerId);
-			} else {
-				player.Send("SetTurn", currentPlayerId);
-			}
+            
+            // NOTE : On ne lance PLUS le tour ici. On attend que tout le monde soit prêt.
 		}
 
 		public override void UserLeft(Player player) {
 			Console.WriteLine("User left: " + player.ConnectUserId);
 			Broadcast("PlayerLeft", player.ConnectUserId);
 			
-			// Si le joueur qui avait le tour part, on passe au suivant
 			if(player.ConnectUserId == currentPlayerId) {
 				NextTurn();
 			}
+            
+            // Si quelqu'un part pendant le lobby, on revérifie si on peut lancer
+            if (!gameHasStarted) CheckGameStart();
 		}
 
 		public override void GotMessage(Player player, Message message) {
 			switch(message.Type) {
+                case "Ready":
+                    player.IsReady = !player.IsReady; // On inverse (Prêt / Pas prêt)
+                    Broadcast("PlayerReadyStatus", player.ConnectUserId, player.IsReady);
+                    CheckGameStart();
+                    break;
+
 				case "Move":
+// ... (reste du code inchangé)
 					player.X = message.GetFloat(0);
 					player.Y = message.GetFloat(1);
 					player.Z = message.GetFloat(2);
@@ -174,5 +180,23 @@ namespace GolfOnlineServer {
             playerList[index].HasStarted = true; // Il entre en jeu !
 			Broadcast("SetTurn", currentPlayerId);
 		}
+
+        private void CheckGameStart() {
+            if (gameHasStarted) return;
+            if (Players.Count() == 0) return;
+
+            // On vérifie si TOUT LE MONDE est prêt
+            foreach(Player p in Players) {
+                if (!p.IsReady) return;
+            }
+
+            // Tout le monde est prêt !
+            gameHasStarted = true;
+            Broadcast("GameStarted");
+            Console.WriteLine("DEBUG: All players ready. Game Started!");
+            
+            // On lance le premier tour
+            NextTurn();
+        }
 	}
 }

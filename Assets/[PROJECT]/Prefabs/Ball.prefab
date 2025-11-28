@@ -48,7 +48,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: efdf11ec4492eed40a057a6b1f91c586, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxForce: 10
+  maxForce: 25
   forceMultiplier: 2
   localPlayerMaterial: {fileID: 2100000, guid: beb291e4e310acb47867c365ec0e8433, type: 2}
   shotCount: 0
@@ -58,6 +58,7 @@ MonoBehaviour:
   isLocalPlayer: 0
   hasFinished: 0
   ownerId: 
+  playerIndex: 0
   lastRespawnTime: 0
   lineRenderer: {fileID: 0}
   maxLightIntensity: 380
