@@ -7,6 +7,8 @@ namespace GolfOnlineServer {
 	public class Player : BasePlayer {
 		public float X, Y, Z;
 		public bool HasFinished = false;
+        public int PlayerIndex = 0;
+        public bool HasStarted = false; // Est-ce qu'il a déjà joué au moins une fois ?
 	}
 
 	[RoomType("GolfOnline")]
@@ -21,23 +23,30 @@ namespace GolfOnlineServer {
 			Console.WriteLine("RoomId: " + RoomId);
 		}
 
+        public override bool AllowUserJoin(Player player) {
+            if (Players.Count() >= 4) return false;
+            return true;
+        }
+
 		public override void UserJoined(Player player) {
-			Console.WriteLine("User joined: " + player.ConnectUserId);
+            player.PlayerIndex = Players.Count() - 1;
+			Console.WriteLine("User joined: " + player.ConnectUserId + " Index: " + player.PlayerIndex);
 			
 			foreach(Player p in Players) {
 				if(p.ConnectUserId != player.ConnectUserId) {
-					player.Send("PlayerJoined", p.ConnectUserId, p.X, p.Y, p.Z);
+                    // On envoie l'état HasStarted des autres
+					player.Send("PlayerJoined", p.ConnectUserId, p.PlayerIndex, p.HasStarted, p.X, p.Y, p.Z);
 				}
 			}
 
-			Broadcast("PlayerJoined", player.ConnectUserId, player.X, player.Y, player.Z);
+            // Le nouveau n'a pas encore commencé (false)
+			Broadcast("PlayerJoined", player.ConnectUserId, player.PlayerIndex, false, player.X, player.Y, player.Z);
 
-			// Si c'est le premier joueur, on lui donne le tour tout de suite
 			if(currentPlayerId == "") {
 				currentPlayerId = player.ConnectUserId;
+                player.HasStarted = true; // Le premier commence direct
 				Broadcast("SetTurn", currentPlayerId);
 			} else {
-				// Sinon on informe le nouveau de qui est en train de jouer
 				player.Send("SetTurn", currentPlayerId);
 			}
 		}
@@ -93,15 +102,15 @@ namespace GolfOnlineServer {
 							targetPlayer.Z = pz;
 						}
 
-						Broadcast("PlayerPosition", ownerId, px, py, pz);
+						Broadcast("UpdateBall", ownerId, px, py, pz);
 					}
 					break;
 
 				case "ReachedHole":
+                    Console.WriteLine("DEBUG: ReachedHole received from " + player.ConnectUserId);
 					player.HasFinished = true;
-					Broadcast("PlayerFinished", player.ConnectUserId); // Optionnel : pour afficher un score
+					Broadcast("PlayerFinished", player.ConnectUserId);
 					
-					// Si c'était son tour, on passe au suivant
 					if(player.ConnectUserId == currentPlayerId) {
 						NextTurn();
 					}
@@ -118,18 +127,18 @@ namespace GolfOnlineServer {
 				totalPlayers++;
 				if(p.HasFinished) finishedCount++;
 			}
+            
+            Console.WriteLine("DEBUG: CheckCompletion " + finishedCount + "/" + totalPlayers);
 
 			if(finishedCount >= totalPlayers && totalPlayers > 0) {
-				// Tout le monde a fini !
-				// On reset les statuts
+				Console.WriteLine("DEBUG: ALL FINISHED! Broadcasting LoadLevel...");
 				foreach(Player p in Players) {
 					p.HasFinished = false;
+                    p.X = 0; p.Y = 0.5f; p.Z = 0;
 				}
 				
-				// On dit à tout le monde de charger le niveau suivant
 				Broadcast("LoadLevel", 2); 
 				
-				// On redonne la main au premier joueur
 				NextTurn();
 			}
 		}
@@ -162,6 +171,7 @@ namespace GolfOnlineServer {
 			if(playerList[index].HasFinished) return;
 
 			currentPlayerId = playerList[index].ConnectUserId;
+            playerList[index].HasStarted = true; // Il entre en jeu !
 			Broadcast("SetTurn", currentPlayerId);
 		}
 	}

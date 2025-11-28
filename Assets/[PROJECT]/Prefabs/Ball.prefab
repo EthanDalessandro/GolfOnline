@@ -50,9 +50,17 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   maxForce: 10
   forceMultiplier: 2
+  localPlayerMaterial: {fileID: 2100000, guid: beb291e4e310acb47867c365ec0e8433, type: 2}
+  shotCount: 0
   rb: {fileID: 49857857882559383}
   isMyTurn: 0
+  isCurrentTurn: 0
   isLocalPlayer: 0
+  hasFinished: 0
+  ownerId: 
+  lastRespawnTime: 0
+  lineRenderer: {fileID: 0}
+  maxLightIntensity: 380
 --- !u!135 &9025944635956223968
 SphereCollider:
   m_ObjectHideFlags: 0

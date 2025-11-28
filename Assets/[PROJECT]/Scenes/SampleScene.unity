@@ -531,6 +531,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   playerPrefab: {fileID: 5715914815792834306, guid: 49af68e63d0d51741a8fb7e245114050, type: 3}
+  myUserId: 
+  currentTurnId: 
 --- !u!1 &1715310930
 GameObject:
   m_ObjectHideFlags: 0
@@ -636,8 +638,8 @@ Transform:
   m_GameObject: {fileID: 1715310930}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 5.69, y: -1.85, z: 5.56}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: 6.52, y: -1, z: 1.17}
+  m_LocalScale: {x: 2.8188767, y: 1, z: 2.8469114}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}

@@ -10,6 +10,14 @@ public class NetworkManager : MonoBehaviour {
 	public string myUserId;
 	public string currentTurnId = ""; // Public pour que BallController puisse lire
 
+    // Points de départ pour 4 joueurs
+    private Vector3[] spawnPoints = new Vector3[] {
+        new Vector3(0, 0.5f, 0),    // Joueur 1
+        new Vector3(2, 0.5f, 0),    // Joueur 2
+        new Vector3(-2, 0.5f, 0),   // Joueur 3
+        new Vector3(0, 0.5f, -2)    // Joueur 4
+    };
+
 	void Start() {
 		Application.runInBackground = true; // Important pour tester avec plusieurs fenêtres
 
@@ -57,19 +65,29 @@ public class NetworkManager : MonoBehaviour {
 				switch(m.Type) {
 					case "PlayerJoined":
 						string id = m.GetString(0);
+                        int index = m.GetInt(1); // Index (0-3)
+                        bool hasStarted = m.GetBoolean(2); // Est-ce qu'il a déjà joué ?
+
 						if(!players.ContainsKey(id)) {
-							GameObject p = Instantiate(playerPrefab);
+                            Vector3 spawnPos = spawnPoints[index % spawnPoints.Length];
+
+							GameObject p = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
 							p.name = "Player_" + id;
+                            
+                            // Si le joueur n'a pas encore commencé, on le cache !
+                            if (!hasStarted) {
+                                p.SetActive(false);
+                            }
+                            
 							players.Add(id, p);
 							
-							// On assigne l'ID au BallController pour qu'il sache à qui il appartient
 							BallController bc = p.GetComponent<BallController>();
 							if(bc != null) {
 								bc.ownerId = id;
 								if(id == myUserId) bc.isLocalPlayer = true;
 							}
 							
-							Debug.Log("Spawned player: " + id);
+							Debug.Log("Spawned player: " + id + " (Active: " + hasStarted + ")");
 						}
 						break;
 
@@ -82,33 +100,40 @@ public class NetworkManager : MonoBehaviour {
 						}
 						break;
 
-					case "PlayerMoved":
-						string moveId = m.GetString(0);
-						if(players.ContainsKey(moveId)) {
-							float x = m.GetFloat(1);
-							float y = m.GetFloat(2);
-							float z = m.GetFloat(3);
-							players[moveId].transform.position = new Vector3(x, y, z);
-						}
-						break;
-
 					case "PlayerShot":
 						string shotId = m.GetString(0);
-						// On ne fait plus rien ici pour la physique, car c'est le streaming de position qui gère le mouvement.
 						Debug.Log("Player shot: " + shotId);
 						break;
 
 					case "SetTurn":
 						string turnId = m.GetString(0);
-						currentTurnId = turnId; // On mémorise à qui c'est le tour
+						currentTurnId = turnId; 
 						Debug.Log("C'est au tour de : " + turnId);
+                        
+                        // Si c'est le tour de quelqu'un, on s'assure qu'il est visible (Spawn !)
+                        if(players.ContainsKey(turnId)) {
+                            GameObject p = players[turnId];
+                            if(!p.activeSelf) {
+                                p.SetActive(true);
+                                Debug.Log("Le joueur " + turnId + " entre en jeu !");
+                            }
+                        }
 						
 						foreach(var kvp in players) {
+                            if (!kvp.Value.activeSelf) continue; // On ignore les joueurs cachés
+
 							BallController bc = kvp.Value.GetComponent<BallController>();
 							if(bc != null) {
-								// On sauvegarde la position de départ pour tout le monde
 								bc.OnTurnStarted();
 
+                                // Mise à jour de l'indicateur global (pour la lumière)
+                                if (kvp.Key == turnId) {
+                                    bc.isCurrentTurn = true;
+                                } else {
+                                    bc.isCurrentTurn = false;
+                                }
+
+                                // Mise à jour de l'indicateur local (pour savoir si JE peux jouer)
 								if(turnId == myUserId && kvp.Key == myUserId) {
 									bc.isMyTurn = true;
 								} else {
@@ -118,15 +143,15 @@ public class NetworkManager : MonoBehaviour {
 						}
 						break;
 
-					case "PlayerPosition":
-						string posId = m.GetString(0);
-						if(players.ContainsKey(posId)) {
+					case "UpdateBall":
+						string ballOwnerId = m.GetString(0);
+						if(players.ContainsKey(ballOwnerId)) {
 							float px = m.GetFloat(1);
 							float py = m.GetFloat(2);
 							float pz = m.GetFloat(3);
 							
 							// On met à jour la cible d'interpolation
-							BallController bc = players[posId].GetComponent<BallController>();
+							BallController bc = players[ballOwnerId].GetComponent<BallController>();
 							if(bc != null) {
 								bc.UpdateTargetPosition(new Vector3(px, py, pz));
 							}
@@ -136,14 +161,14 @@ public class NetworkManager : MonoBehaviour {
 					case "PlayerFinished":
 						string finishedId = m.GetString(0);
 						if(players.ContainsKey(finishedId)) {
-							players[finishedId].SetActive(false); // On cache le joueur
+							players[finishedId].SetActive(false); // On cache le joueur qui a fini
 							Debug.Log("Player finished: " + finishedId);
 						}
 						break;
 
 					case "LoadLevel":
 						int levelIndex = m.GetInt(0);
-						Debug.Log("Chargement du niveau : " + levelIndex);
+						Debug.Log("DEBUG: LoadLevel received! Index: " + levelIndex);
 						ResetGameForNewLevel();
 						break;
 				}
@@ -153,16 +178,22 @@ public class NetworkManager : MonoBehaviour {
 	}
 
 	void ResetGameForNewLevel() {
+        Debug.Log("--- RESET LEVEL ---");
 		foreach(var kvp in players) {
 			GameObject p = kvp.Value;
 			p.SetActive(true);
-			p.transform.position = new Vector3(0, 0.5f, 0);
+			p.transform.position = new Vector3(0, 0.5f, 0); 
 			p.GetComponent<Rigidbody>().isKinematic = false;
+            p.GetComponent<Rigidbody>().linearVelocity = Vector3.zero; // Stop physics
 			
 			BallController bc = p.GetComponent<BallController>();
 			if(bc != null) {
 				bc.hasFinished = false;
 				bc.isMyTurn = false;
+                
+                // FORCE la mise à jour de la cible réseau pour éviter le retour en arrière
+                bc.UpdateTargetPosition(p.transform.position);
+                bc.OnTurnStarted();
 			}
 		}
 	}
@@ -179,12 +210,6 @@ public class NetworkManager : MonoBehaviour {
 		}
 	}
 
-	public void SendPosition(Vector3 pos) {
-		if(pioconnection != null) {
-			pioconnection.Send("Position", pos.x, pos.y, pos.z);
-		}
-	}
-	
 	public void SendUpdateBall(string ownerId, Vector3 pos) {
 		if(pioconnection != null) {
 			pioconnection.Send("UpdateBall", ownerId, pos.x, pos.y, pos.z);
@@ -196,15 +221,6 @@ public class NetworkManager : MonoBehaviour {
 			pioconnection.Send("ReachedHole");
 		}
 	}
-
-	void OnGUI() {
-		if (pioconnection != null) {
-			if (GUI.Button(new Rect(10, 10, 150, 50), "Disconnect")) {
-				Disconnect();
-			}
-		}
-	}
-
 	void OnApplicationQuit() {
 		Disconnect();
 	}
