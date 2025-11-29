@@ -9,6 +9,7 @@ public class NetworkManager : MonoBehaviour {
 	private Dictionary<string, GameObject> players = new Dictionary<string, GameObject>();
 	public string myUserId;
 	public string currentTurnId = ""; 
+    public int currentLevelIndex = 1; // Niveau actuel
 
     // LOBBY
     public bool gameStarted = false; // Public pour que BallController puisse savoir s'il doit afficher son HUD
@@ -21,20 +22,37 @@ public class NetworkManager : MonoBehaviour {
         new Vector3(-2, 0.5f, 0),   // Joueur 3
         new Vector3(0, 0.5f, -2)    // Joueur 4
     };
+    
+    // Liste des joueurs ayant fini le niveau
+    private List<string> finishedPlayers = new List<string>();
+
+    // TIMEOUT DE CONNEXION
+    private float connectionStartTime = 0f;
+    private bool isConnecting = false;
 
 	void Start() {
-		Application.runInBackground = true; // Important pour tester avec plusieurs fenêtres
+		Application.runInBackground = true; 
+        ConnectToServer();
+    }
 
-		string generatedUserId = "Guest" + Random.Range(0, 10000);
+    void ConnectToServer() {
+        isConnecting = true;
+        connectionStartTime = Time.time;
+
+		string generatedUserId = "Player_" + System.Guid.NewGuid().ToString();
+        
 		PlayerIO.Authenticate(
 			"chessonline-2xyyfrmdnuipfyqvw9idpg",
 			"public",
 			new Dictionary<string, string> { { "userId", generatedUserId } },
 			null,
 			delegate (Client client) {
-				Debug.Log("Connected");
-				myUserId = generatedUserId; // On sauvegarde notre ID
-				client.Multiplayer.DevelopmentServer = new ServerEndpoint("localhost", 8184);
+				Debug.Log("Authenticated as " + generatedUserId);
+				myUserId = generatedUserId; 
+                // FIX: Utiliser 127.0.0.1 au lieu de localhost pour éviter les problèmes IPv6
+				client.Multiplayer.DevelopmentServer = new ServerEndpoint("127.0.0.1", 8184);
+				
+                Debug.Log("Attempting to join room...");
 				client.Multiplayer.CreateJoinRoom(
 					"MyRoom",
 					"GolfOnline",
@@ -42,20 +60,27 @@ public class NetworkManager : MonoBehaviour {
 					null,
 					null,
 					delegate (Connection connection) {
-						Debug.Log("Joined Room!");
+						Debug.Log(">>> JOIN SUCCESS! Connection object received.");
+                        isConnecting = false;
 						pioconnection = connection;
 						connection.OnMessage += HandleMessage;
 						
 						connection.OnDisconnect += delegate(object sender, string reason) {
-							Debug.Log("Disconnected: " + reason);
+							Debug.LogWarning("Disconnected from server: " + reason);
 						};
 					},
-					delegate (PlayerIOError error) { Debug.LogError(error.ToString()); }
+					delegate (PlayerIOError error) { 
+                        isConnecting = false;
+                        Debug.LogError("Error Joining Room: " + error.ToString()); 
+                    }
 				);
 			},
-			delegate (PlayerIOError error) { Debug.LogError(error.ToString()); }
+			delegate (PlayerIOError error) { 
+                isConnecting = false;
+                Debug.LogError("Error Authenticating: " + error.ToString()); 
+            }
 		);
-	}
+    }
 
 	void HandleMessage(object sender, PlayerIOClient.Message m) {
 		lock(msgQueue) {
@@ -106,6 +131,7 @@ public class NetworkManager : MonoBehaviour {
 							BallController bc = p.GetComponent<BallController>();
 							if(bc != null) {
 								bc.ownerId = id;
+                                bc.playerIndex = index;
 								if(id == myUserId) bc.isLocalPlayer = true;
 							}
 							
@@ -186,15 +212,17 @@ public class NetworkManager : MonoBehaviour {
 						string finishedId = m.GetString(0);
 						if(players.ContainsKey(finishedId)) {
 							players[finishedId].SetActive(false); // On cache le joueur qui a fini
+                            if(!finishedPlayers.Contains(finishedId)) finishedPlayers.Add(finishedId);
 							Debug.Log("Player finished: " + finishedId);
 						}
 						break;
 
-					case "LoadLevel":
-						int levelIndex = m.GetInt(0);
-						Debug.Log("DEBUG: LoadLevel received! Index: " + levelIndex);
-						ResetGameForNewLevel();
-						break;
+                    case "LoadLevel":
+                        int levelIdx = m.GetInt(0);
+                        currentLevelIndex = levelIdx;
+                        Debug.Log("DEBUG: LoadLevel received! Index: " + levelIdx);
+                        ResetGameForNewLevel();
+                        break;
 				}
 			}
 			msgQueue.Clear();
@@ -203,14 +231,26 @@ public class NetworkManager : MonoBehaviour {
 
 	void ResetGameForNewLevel() {
         Debug.Log("--- RESET LEVEL ---");
+        
+        finishedPlayers.Clear();
+
 		foreach(var kvp in players) {
 			GameObject p = kvp.Value;
-			p.SetActive(true); // On réactive tout le monde au reset (version stable)
-			p.transform.position = new Vector3(0, 0.5f, 0); 
-			p.GetComponent<Rigidbody>().isKinematic = false;
-            p.GetComponent<Rigidbody>().linearVelocity = Vector3.zero; // Stop physics
+			p.SetActive(true); // On réactive tout le monde au reset
 			
-			BallController bc = p.GetComponent<BallController>();
+            BallController bc = p.GetComponent<BallController>();
+            
+            // Position de départ simple base sur l'index
+            Vector3 startPos = new Vector3(0, 0.5f, 0);
+            if (bc != null && bc.playerIndex < spawnPoints.Length) {
+                startPos = spawnPoints[bc.playerIndex];
+            }
+            p.transform.position = startPos;
+
+			p.GetComponent<Rigidbody>().isKinematic = false;
+            p.GetComponent<Rigidbody>().linearVelocity = Vector3.zero; 
+            p.GetComponent<Rigidbody>().angularVelocity = Vector3.zero;
+			
 			if(bc != null) {
 				bc.hasFinished = false;
 				bc.isMyTurn = false;
@@ -251,9 +291,44 @@ public class NetworkManager : MonoBehaviour {
 			pioconnection.Send("ReachedHole");
 		}
 	}
+    
+    public void Disconnect() {
+        if(pioconnection != null) {
+            Debug.Log("Closing connection...");
+            pioconnection.Disconnect();
+            pioconnection = null;
+        }
+        isConnecting = false;
+    }
+    
+    void OnDisable() {
+        Disconnect();
+    }
+
+	void OnApplicationQuit() {
+		Disconnect();
+	}
+
+	void OnDestroy() {
+		Disconnect();
+	}
 
     // INTERFACE DU LOBBY
     void OnGUI() {
+        // Message de chargement / Timeout
+        if (isConnecting) {
+             GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+             GUI.Label(new Rect(Screen.width/2 - 100, Screen.height/2, 200, 30), "Connexion en cours...", new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
+             
+             if (Time.time - connectionStartTime > 5.0f) {
+                 if (GUI.Button(new Rect(Screen.width/2 - 75, Screen.height/2 + 40, 150, 40), "Réessayer")) {
+                     Disconnect();
+                     ConnectToServer();
+                 }
+             }
+             return; // On n'affiche rien d'autre si on connecte
+        }
+
         if (!gameStarted && pioconnection != null) {
             // Fond noir semi-transparent
             GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
@@ -282,25 +357,4 @@ public class NetworkManager : MonoBehaviour {
             GUILayout.EndArea();
         }
     }
-
-	void OnApplicationQuit() {
-		Disconnect();
-	}
-
-	void OnApplicationPause(bool pauseStatus) {
-		if (pauseStatus) Disconnect();
-	}
-
-	void OnDestroy() {
-		Disconnect();
-	}
-
-	void Disconnect() {
-		if(pioconnection != null) {
-			Debug.Log("Attempting to disconnect...");
-			pioconnection.Disconnect();
-			pioconnection = null;
-			Debug.Log("Disconnected from server");
-		}
-	}
 }

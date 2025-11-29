@@ -533,6 +533,7 @@ MonoBehaviour:
   playerPrefab: {fileID: 5715914815792834306, guid: 49af68e63d0d51741a8fb7e245114050, type: 3}
   myUserId: 
   currentTurnId: 
+  currentLevelIndex: 1
   gameStarted: 0
 --- !u!1 &1290811825
 GameObject:
@@ -580,7 +581,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   distance: 8
   height: 4
-  smoothSpeed: 20
+  transitionSmoothTime: 1.5
+  rotationSmoothTime: 0.1
   rotationSpeed: 2
 --- !u!1 &1715310930
 GameObject:
