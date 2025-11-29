@@ -1,11 +1,10 @@
 using UnityEngine;
-using DG.Tweening; // Nécessaire pour les animations
+using DG.Tweening; 
 
 public class BallController : MonoBehaviour {
     // Paramètres de tir
-    public float maxForce = 10f;
-    public float forceMultiplier = 2f;
-
+    public float maxForce = 20f; 
+    
     // FEEDBACK VISUEL
     public Material localPlayerMaterial; 
     public int shotCount = 0; 
@@ -18,40 +17,42 @@ public class BallController : MonoBehaviour {
     public bool isLocalPlayer = false;
     public bool hasFinished = false;
     public string ownerId; 
-    public int playerIndex = 0; // Pour se souvenir du point de spawn 
+    public int playerIndex = 0; 
 
     // Variables internes
-    private Vector3 startPos;
-    private Vector3 endPos;
     private Vector3 lastValidPosition;
-    private bool isDragging = false;
     private bool wasMoving = false;
     private bool hasStartedMoving = false; 
     private bool hasShotThisTurn = false; 
     public float lastRespawnTime = 0f; 
+    private float lastShootTime = 0f; // SÉCURITÉ ANTI-BLOCAGE
+    
+    // Tir
+    private float currentPower = 0f; 
+    private float chargeStartTime = 0f; 
 
     // Réseau
     private float lastSendTime = 0f;
     private Vector3 targetPosition; 
 
-    // LineRenderer & Light
-    public LineRenderer lineRenderer;
+    // Light
     private Light turnLight;
-    private bool isLightOn = false; // Pour suivre l'état de l'animation
-    [SerializeField] private float maxLightIntensity = 20f; // Votre réglage d'intensité
+    private bool isLightOn = false; 
+    [SerializeField] private float maxLightIntensity = 20f; 
+
+    // Prévisualisation
+    private LineRenderer lineRenderer;
 
     void Start() {
         if (rb == null) rb = GetComponent<Rigidbody>();
+        maxForce = 20f; 
         
-        // --- FEEDBACK : COULEUR DU JOUEUR LOCAL ---
         if (isLocalPlayer && localPlayerMaterial != null) {
             Renderer r = GetComponent<Renderer>();
-            if (r != null) {
-                r.material = localPlayerMaterial;
-            }
+            if (r != null) r.material = localPlayerMaterial;
         }
 
-        // --- FEEDBACK : LUMIÈRE DE TOUR (SPOTLIGHT) ---
+        // LUMIÈRE
         GameObject lightObj = new GameObject("TurnIndicatorLight");
         lightObj.transform.parent = transform;
         lightObj.transform.localPosition = new Vector3(0, 5.5f, 0); 
@@ -65,36 +66,45 @@ public class BallController : MonoBehaviour {
         turnLight.spotAngle = 30f;
         turnLight.enabled = true; 
 
-        // Configuration du LineRenderer
-        if (lineRenderer == null) {
-            lineRenderer = gameObject.AddComponent<LineRenderer>();
-            lineRenderer.startWidth = 0.1f;
-            lineRenderer.endWidth = 0.05f;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.startColor = Color.yellow;
-            lineRenderer.endColor = Color.red;
-            lineRenderer.enabled = false;
-        }
+        // TRAIL
+        TrailRenderer trail = gameObject.AddComponent<TrailRenderer>();
+        trail.startWidth = 0.3f; 
+        trail.endWidth = 0.0f;   
+        trail.time = 0.3f;       
+        trail.material = new Material(Shader.Find("Sprites/Default"));
+        trail.startColor = new Color(1f, 1f, 1f, 0.4f); 
+        trail.endColor = new Color(1f, 1f, 1f, 0f);     
+        trail.minVertexDistance = 0.1f; 
+
+        // CONFIGURATION LINE RENDERER (PREVISUALISATION)
+        if (lineRenderer == null) lineRenderer = gameObject.AddComponent<LineRenderer>();
+        lineRenderer.startWidth = 0.2f; // Plus large
+        lineRenderer.endWidth = 0.05f; 
+        
+        // Shader de secours
+        Shader shader = Shader.Find("Sprites/Default");
+        if (shader == null) shader = Shader.Find("Legacy Shaders/Particles/Alpha Blended Premultiply");
+        
+        lineRenderer.material = new Material(shader);
+        lineRenderer.startColor = new Color(1f, 1f, 0f, 0.8f); // Jaune
+        lineRenderer.endColor = new Color(1f, 0f, 0f, 0f);     // Rouge
+        lineRenderer.positionCount = 0;
+        lineRenderer.enabled = false;
 
         lastValidPosition = transform.position;
         targetPosition = transform.position;
     }
 
     void Update() {
-        // GESTION DE LA LUMIÈRE AVEC DOTWEEN
+        // LUMIÈRE
         if (turnLight != null) {
             bool shouldBeOn = isCurrentTurn && !isLocalPlayer;
-            
-            // Si l'état désiré change, on lance l'animation
             if (shouldBeOn != isLightOn) {
                 isLightOn = shouldBeOn;
-                turnLight.DOKill(); // On arrête les animations en cours pour éviter les conflits
-                
+                turnLight.DOKill(); 
                 if (isLightOn) {
-                    // Allumage progressif (1 seconde)
                     turnLight.DOIntensity(maxLightIntensity, 1f).SetEase(Ease.OutQuad);
                 } else {
-                    // Extinction progressive (0.5 seconde)
                     turnLight.DOIntensity(0f, 0.5f).SetEase(Ease.InQuad);
                 }
             }
@@ -107,7 +117,6 @@ public class BallController : MonoBehaviour {
         bool amIMaster = (nm.myUserId == nm.currentTurnId);
 
         if (amIMaster) {
-            // Si j'ai fini, je ne suis plus soumis à la physique (je reste au fond du trou)
             if (hasFinished) {
                 rb.isKinematic = true;
                 rb.linearVelocity = Vector3.zero;
@@ -115,13 +124,13 @@ public class BallController : MonoBehaviour {
                 rb.isKinematic = false;
             }
 
-            // Streaming de position
+            // Streaming
             if (IsMoving()) {
                 if (Time.time - lastSendTime > 0.05f) { 
                     nm.SendUpdateBall(ownerId, transform.position);
                     lastSendTime = Time.time;
                 }
-                targetPosition = transform.position; // On garde la cible à jour localement aussi !
+                targetPosition = transform.position; 
                 wasMoving = true;
             } else if (wasMoving) {
                 nm.SendUpdateBall(ownerId, transform.position);
@@ -129,7 +138,7 @@ public class BallController : MonoBehaviour {
                 wasMoving = false;
             }
 
-            // Respawn si tombé (seulement si on n'a pas fini !)
+            // Respawn
             if (!hasFinished && transform.position.y < -5f) {
                 ResetToLastPosition();
             }
@@ -137,102 +146,122 @@ public class BallController : MonoBehaviour {
             // Logique de jeu locale
             if (isLocalPlayer && isMyTurn && !hasFinished) {
                 if (hasShotThisTurn) {
-                    if (!hasStartedMoving && IsMoving()) {
-                        hasStartedMoving = true;
-                    }
+                    if (!hasStartedMoving && IsMoving()) hasStartedMoving = true;
 
-                    if (hasStartedMoving && AreAllBallsStopped()) {
-                        Debug.Log("Fin du tour.");
+                    // CONDITIONS DE FIN DE TOUR :
+                    // 1. On a bougé ET on s'est arrêté
+                    // 2. OU BIEN : On a tiré il y a plus de 1s et on ne bouge toujours pas (Bug physique ou mur)
+                    bool timeOutReached = (Time.time - lastShootTime > 1.0f) && !IsMoving();
+
+                    if ((hasStartedMoving && AreAllBallsStopped()) || timeOutReached) {
+                        Debug.Log("Fin du tour (Normal ou Timeout).");
                         nm.SendTurnEnded();
                         isMyTurn = false;
                         hasShotThisTurn = false;
                         hasStartedMoving = false;
+                        currentPower = 0f; 
                     }
                 }
                 
                 if (!hasShotThisTurn && AreAllBallsStopped()) {
-                     HandleInput();
+                     HandleShootingInput();
                 }
             }
 
         } else {
             // Esclave
             rb.isKinematic = true;
-            
-            // Si j'ai fini, je ne bouge plus ! (J'ignore les vieux messages réseau qui pourraient me sortir du trou)
             if (!hasFinished) {
                 transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * 10f);
             }
+        }
+    }
+
+    void HandleShootingInput() {
+        Vector3 camForward = Camera.main.transform.forward;
+        camForward.y = 0; 
+        if (camForward.sqrMagnitude > 0.001f) {
+            camForward.Normalize();
+        } else {
+            camForward = Vector3.forward; 
+        }
+
+        if (Input.GetKeyDown(KeyCode.Space)) {
+            chargeStartTime = Time.time;
+            currentPower = 0f;
+            lineRenderer.enabled = true;
+        }
+
+        if (Input.GetKey(KeyCode.Space)) {
+            float timeCharged = Time.time - chargeStartTime;
+            currentPower = Mathf.PingPong(timeCharged * 25f, maxForce);
+            
+            // DESSIN DE LA TRAJECTOIRE
+            Vector3 forceVector = camForward * currentPower;
+            DrawTrajectory(forceVector);
+        } 
+
+        if (Input.GetKeyUp(KeyCode.Space)) {
+            float timeCharged = Time.time - chargeStartTime;
+            float finalPower = Mathf.PingPong(timeCharged * 25f, maxForce);
+            
+            if (finalPower < 2f) finalPower = 2f;
+
+            Debug.Log($"TIR ! Puissance: {finalPower} (Max: {maxForce}) Direction: {camForward}");
+
+            Vector3 shootForce = camForward * finalPower;
+            Shoot(shootForce);
+            
+            currentPower = 0f;
+            lineRenderer.enabled = false;
+
+            NetworkManager nm = FindObjectOfType<NetworkManager>();
+            if (nm != null) {
+                nm.SendShoot(shootForce);
+                // On NE PASSE PAS le tour ici !
+            }
+        }
+    }
+
+    void DrawTrajectory(Vector3 force) {
+        lineRenderer.enabled = true;
+        lineRenderer.positionCount = 50; 
+        Vector3 origin = transform.position;
+        Vector3 velocity = force / rb.mass; 
+
+        for (int i = 0; i < 50; i++) {
+            float time = i * 0.05f; 
+            Vector3 point = origin + velocity * time + 0.5f * Physics.gravity * time * time;
+            
+            if (point.y < -2f) { // On coupe si ça descend trop bas
+                lineRenderer.positionCount = i + 1;
+                lineRenderer.SetPosition(i, point);
+                break;
+            }
+            lineRenderer.SetPosition(i, point);
         }
     }
     
     bool AreAllBallsStopped() {
         BallController[] allBalls = FindObjectsOfType<BallController>();
         foreach(var ball in allBalls) {
-            if (ball.IsMoving()) return false;
+            if (ball.rb.linearVelocity.magnitude > 0.2f) return false;
             if (Time.time - ball.lastRespawnTime < 1.0f) return false;
         }
         return true;
     }
-    
-    void HandleInput() {
-        if (Input.GetMouseButtonDown(0)) {
-            startPos = GetMouseWorldPos();
-            isDragging = true;
-            lineRenderer.enabled = true;
-        }
 
-        if (Input.GetMouseButton(0) && isDragging) {
-            Vector3 currentMousePos = GetMouseWorldPos();
-            Vector3 forceVector = startPos - currentMousePos;
-            Vector3 clampedForce = Vector3.ClampMagnitude(forceVector * forceMultiplier, maxForce);
-            
-            lineRenderer.SetPosition(0, transform.position);
-            lineRenderer.SetPosition(1, transform.position + new Vector3(clampedForce.x, 0, clampedForce.z));
-        }
-
-        if (Input.GetMouseButtonUp(0) && isDragging) {
-            endPos = GetMouseWorldPos();
-            isDragging = false;
-            lineRenderer.enabled = false;
-            Shoot();
-        }
-    }
-
-    void Shoot() {
-        Vector3 forceVector = startPos - endPos;
-        Vector3 clampedForce = Vector3.ClampMagnitude(forceVector * forceMultiplier, maxForce);
-        clampedForce.y = 0;
-
-        ApplyForce(clampedForce);
+    public void Shoot(Vector3 force) {
+        rb.isKinematic = false;
+        rb.AddForce(force, ForceMode.Impulse);
         
-        // --- FEEDBACK : COMPTEUR DE TIRS ---
         shotCount++;
-
-        NetworkManager nm = FindObjectOfType<NetworkManager>();
-        if(nm != null) {
-            nm.SendShoot(clampedForce);
-        }
-        
         hasShotThisTurn = true;
         hasStartedMoving = false; 
-    }
-
-    public void ApplyForce(Vector3 force) {
-        rb.AddForce(force, ForceMode.Impulse);
-    }
-
-    Vector3 GetMouseWorldPos() {
-        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-        if (Physics.Raycast(ray, out hit)) {
-            return hit.point;
-        }
-        return Vector3.zero;
+        lastShootTime = Time.time; 
     }
 
     public bool IsMoving() {
-        // Unity 6
         return rb.linearVelocity.magnitude > 0.1f;
     }
     
@@ -250,11 +279,18 @@ public class BallController : MonoBehaviour {
     }
 
     void ResetToLastPosition() {
-        Debug.Log("Respawn de " + ownerId);
+        if (lastValidPosition.y < 0f) {
+            Debug.LogWarning($"Position de respawn corrompue ({lastValidPosition}). Reset au centre.");
+            lastValidPosition = new Vector3(0, 0.5f, 0);
+        }
+
+        Debug.Log("Respawn de " + ownerId + " à " + lastValidPosition);
+        
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
         rb.Sleep(); 
-        transform.position = lastValidPosition + Vector3.up * 0.1f; 
+        
+        transform.position = lastValidPosition + Vector3.up * 0.2f; 
         targetPosition = transform.position;
         lastRespawnTime = Time.time; 
         
@@ -262,24 +298,41 @@ public class BallController : MonoBehaviour {
         if(nm != null) nm.SendUpdateBall(ownerId, transform.position);
     }
 
-    // --- FEEDBACK : INTERFACE UTILISATEUR (HUD) ---
     void OnGUI() {
         NetworkManager nm = FindObjectOfType<NetworkManager>();
-        if (nm == null || !nm.gameStarted) return; // On n'affiche rien tant que le lobby est là
+        if (nm == null || !nm.gameStarted) return; 
 
         if (isLocalPlayer) {
-            // Style simple pour le TP
             GUIStyle style = new GUIStyle();
             style.fontSize = 20;
             style.normal.textColor = Color.white;
             
-            // Affichage du compteur
             GUI.Label(new Rect(20, 20, 200, 30), "Coups : " + shotCount, style);
 
-            // Affichage de l'état du tour
             if (isMyTurn) {
                 style.normal.textColor = Color.green;
                 GUI.Label(new Rect(20, 50, 300, 30), "--> C'EST À TOI DE JOUER !", style);
+
+                if (AreAllBallsStopped()) {
+                    GUI.Label(new Rect(20, 80, 400, 30), "Maintenez ESPACE pour charger.", style);
+                    
+                    if (Input.GetKey(KeyCode.Space)) {
+                        float barHeight = 300f;
+                        float barWidth = 40f;
+                        float xPos = Screen.width - 80f;
+                        float yPos = Screen.height / 2f - barHeight / 2f;
+
+                        GUI.Box(new Rect(xPos, yPos, barWidth, barHeight), "");
+                        float fillHeight = (currentPower / maxForce) * barHeight;
+                        Texture2D texture = new Texture2D(1, 1);
+                        texture.SetPixel(0, 0, Color.Lerp(Color.yellow, Color.red, currentPower / maxForce));
+                        texture.Apply();
+                        GUI.DrawTexture(new Rect(xPos, yPos + (barHeight - fillHeight), barWidth, fillHeight), texture);
+                    }
+                } else {
+                    style.normal.textColor = Color.red;
+                    GUI.Label(new Rect(20, 80, 400, 30), "Attente de l'arrêt complet des balles...", style);
+                }
             } else {
                 style.normal.textColor = Color.yellow;
                 GUI.Label(new Rect(20, 50, 300, 30), "En attente des autres...", style);
